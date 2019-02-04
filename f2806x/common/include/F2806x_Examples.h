@@ -59,9 +59,9 @@ extern "C" {
 //
 // Uncomment for 90 MHz devices [90 MHz = (10MHz * 18)/2]
 //
-#define DSP28_PLLCR   18
+//define DSP28_PLLCR   18
 //#define DSP28_PLLCR   17
-//#define DSP28_PLLCR   16
+#define DSP28_PLLCR   16
 //#define DSP28_PLLCR   15
 //#define DSP28_PLLCR   14
 //#define DSP28_PLLCR   13
@@ -101,8 +101,8 @@ extern "C" {
 //             Uncomment the line: #define CPU_RATE 11.111L
 //
 
-#define CPU_RATE   11.111L   // for a 90MHz CPU clock speed (SYSCLKOUT)
-//#define CPU_RATE   12.500L   // for a 80MHz CPU clock speed (SYSCLKOUT)
+//#define CPU_RATE   11.111L   // for a 90MHz CPU clock speed (SYSCLKOUT)
+#define CPU_RATE   12.500L   // for a 80MHz CPU clock speed (SYSCLKOUT)
 //#define CPU_RATE   16.667L   // for a 60MHz CPU clock speed (SYSCLKOUT)
 //#define CPU_RATE   20.000L   // for a 50MHz CPU clock speed  (SYSCLKOUT)
 //#define CPU_RATE   25.000L   // for a 40MHz CPU clock speed  (SYSCLKOUT)

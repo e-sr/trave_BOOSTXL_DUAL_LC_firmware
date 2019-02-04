@@ -26,6 +26,16 @@
 	</natures>
 	<linkedResources>
 		<link>
+			<name>ADS1220.c</name>
+			<type>1</type>
+			<locationURI>BOOSTXL_DUAL_LC_COMMON/ADS1220.c</locationURI>
+		</link>
+		<link>
+			<name>BOOSTXL_DUAL_LOAD_CELL_f28069.c</name>
+			<type>1</type>
+			<locationURI>BOOSTXL_DUAL_LC_COMMON/BOOSTXL_DUAL_LOAD_CELL_f28069.c</locationURI>
+		</link>
+		<link>
 			<name>F2806x_CodeStartBranch.asm</name>
 			<type>1</type>
 			<locationURI>C2000_WARE_f28069/common/source/F2806x_CodeStartBranch.asm</locationURI>
@@ -72,6 +82,10 @@
 		</link>
 	</linkedResources>
 	<variableList>
+		<variable>
+			<name>BOOSTXL_DUAL_LC_COMMON</name>
+			<value>file:/home/esr/gdrive/myP/BOOSTXL_DUAL_LOADCELL/software</value>
+		</variable>
 		<variable>
 			<name>C2000_WARE_LIB</name>
 			<value>file:/home/esr/ti/C2000Ware_1_00_06_00_Software/libraries</value>
