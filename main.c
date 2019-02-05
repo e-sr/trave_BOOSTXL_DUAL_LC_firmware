@@ -47,6 +47,7 @@
 //#define LSPC_CLK_FREQ_Hz (SYS_CLK_FREQ_Hz/4) //20MHz guarda Step 1. Initialize System Control
 
 #define DEBUG_GPIO5 GpioDataRegs.GPADAT.bit.GPIO5
+#define LED_D1_GREEN  GpioDataRegs.GPBDAT.bit.GPIO39
 #define LED_D9_RED   GpioDataRegs.GPBDAT.bit.GPIO34
 #define LED_D10_BLUE  GpioDataRegs.GPBDAT.bit.GPIO39
 
@@ -66,6 +67,7 @@
 #define TIMER1_FREQ 0x01f4 // 500Hz
 #define TIMER_1_ISR_DECIMATION_10_MS 5
 #define TIMER_1_ISR_DECIMATION_100_MS 50
+#define TIMER_1_ISR_DECIMATION_500_MS 250
 
 //LCD
 //#define OPENLCD_BAUDRATE 9600
@@ -79,22 +81,18 @@
 // Function Prototypes
 
 #ifdef FLASH
-#pragma CODE_SECTION(epwm3_timer_isr, "ramfuncs");
+#pragma CODE_SECTION(xint1_isr, "ramfuncs");
 #pragma CODE_SECTION(cpu_timer1_isr, "ramfuncs");
 #pragma CODE_SECTION(FIR32_alt_calc, "ramfuncs");
 #pragma CODE_SECTION(write_and_send_stream_mbox, "ramfuncs");
+#pragma CODE_SECTION(ADS1220ReadData, "ramfuncs");
 #endif
-
 //__interrupt void epwm3_timer_isr(void);
 __interrupt void cpu_timer1_isr(void);
 __interrupt void xint1_isr(void);
 
-
 void GPIO_init(void);
-void setup_start_stop(volatile TraveSM_t *tSM);
-void write_and_send_stream_mbox(uint16_t mbox_n, uint16_t header, float32 v1,
-                                float32 v2);
-void setup_MAVG(volatile TraveSM_t *tSM);
+
 
 //--------
 // Globals
@@ -113,38 +111,37 @@ volatile Uint32 Xint1Count;
 ADS1220_t ads1220_0;
 ADS1220_t ads1220_1;
 ADS1220_t* ads1220_handle[2];
-const uint32_t ads1220_cs_gpio_n[2]= {BXL_D_LC_CS0,BXL_D_LC_CS1};
+const uint32_t ads1220_cs_gpio_n[2] = { BXL_D_LC_CS0, BXL_D_LC_CS1 };
 
 volatile uint16_t wait_for_m_avg_cycles;
 volatile uint16_t wait_for_sr400_cycles;
 volatile uint16_t mes_wait_flag;
 volatile uint16_t tare_cal_flag;
 volatile _iq30 accumulator;
-volatile uint16_t tare_cal_lc;
 volatile uint16_t mes_acq_flag;
 volatile uint16_t stream_flag;
 volatile uint16_t flag_100_ms;
+volatile uint16_t flag_500_ms;
 //-------------------------------
 //FILTERING
-#pragma DATA_SECTION(lpf_0, "firfilt");
-#pragma DATA_SECTION(lpf_dbuffer_0,"firldb");
-#pragma DATA_SECTION(lpf_1, "firfilt");
-#pragma DATA_SECTION(lpf_dbuffer_1,"firldb");
-#pragma DATA_SECTION(lpf_coefs, "coefffilt");
+#pragma DATA_SECTION(fir_0, "firfilt");
+#pragma DATA_SECTION(fir_dbuffer_0,"firldb");
+#pragma DATA_SECTION(fir_1, "firfilt");
+#pragma DATA_SECTION(fir_dbuffer_1,"firldb");
+#pragma DATA_SECTION(fir_coefs, "coefffilt");
 
 //FIR handle
-FIR32_Handle lpf_handle[2];
+FIR32_Handle fir_handle[2];
 //FIR obj
-FIR32 lpf_0 = FIR32_ALT_DEFAULTS;
-FIR32 lpf_1 = FIR32_ALT_DEFAULTS;
+FIR32 fir_0 = FIR32_ALT_DEFAULTS;
+FIR32 fir_1 = FIR32_ALT_DEFAULTS;
 //FIR data buffer
-int32_t lpf_dbuffer_0[LPF__ORDER + 1];
-int32_t lpf_dbuffer_1[LPF__ORDER + 1];
+int32_t fir_dbuffer_0[LPF__ORDER + 1];
+int32_t fir_dbuffer_1[LPF__ORDER + 1];
 //FIR coefficients
-const int32_t lpf_coefs[LPF__ORDER + 1] = LPF__COEF;
+const int32_t fir_coefs[LPF__ORDER + 1] = LPF__COEF;
 
 //FIR decimation factor
-#define DECIMATION_FACTOR_1600_TO_400 LPF_1600_TO_400_DECIMATION_FACTOR                                     //4
 #define WAIT_FOR_TARE_CAL_s (1)//2 seconds
 #define WAIT_FOR_SR400_CYCLES_STOP (uint16_t)(400/20)//s seconds
 
@@ -168,6 +165,8 @@ void main(void)
 
 {
     uint16_t i;
+    uint16_t tare_cal_lc;
+
     //===================================
     // Step 1. Initialize System Control:
     // PLL, WatchDog, enable Peripheral Clocks
@@ -255,19 +254,19 @@ void main(void)
     // Initialize FIR32 object
     //=======
     //400
-    lpf_handle[0] = &lpf_0;
+    fir_handle[0] = &fir_0;
     //
-    lpf_handle[0]->order = LPF__ORDER;
-    lpf_handle[0]->dbuffer_ptr = (int32_t *) lpf_dbuffer_0;
-    lpf_handle[0]->coeff_ptr = (int32_t *) lpf_coefs;
-    FIR32_alt_init(lpf_handle[0]);
+    fir_handle[0]->order = LPF__ORDER;
+    fir_handle[0]->dbuffer_ptr = (int32_t *) fir_dbuffer_0;
+    fir_handle[0]->coeff_ptr = (int32_t *) fir_coefs;
+    FIR32_alt_init(fir_handle[0]);
 
-    lpf_handle[1] = &lpf_1;
+    fir_handle[1] = &fir_1;
     //
-    lpf_handle[1]->order = LPF__ORDER;
-    lpf_handle[1]->dbuffer_ptr = (int32_t *) lpf_dbuffer_1;
-    lpf_handle[1]->coeff_ptr = (int32_t *) lpf_coefs;
-    FIR32_alt_init(lpf_handle[1]);
+    fir_handle[1]->order = LPF__ORDER;
+    fir_handle[1]->dbuffer_ptr = (int32_t *) fir_dbuffer_1;
+    fir_handle[1]->coeff_ptr = (int32_t *) fir_coefs;
+    FIR32_alt_init(fir_handle[1]);
 
     //moving average object init
     m_avg_obj_handler[0] = &m_avg_obj_0;
@@ -277,15 +276,14 @@ void main(void)
     //init force handle
     force_handle[0] = &f0;
     force_handle[1] = &f1;
-
     //ads1220
-    ads1220_handle[0]=&ads1220_0;
-    ads1220_handle[1]=&ads1220_1;
+    ads1220_handle[0] = &ads1220_0;
+    ads1220_handle[1] = &ads1220_1;
     BXL_D_LC_F28069_ADS1220_RESET();
 
-    for (i = 0; i < BXL_D_LC_ADS1220_NUMBER; ++i) {
-        ADS1220Init(ads1220_handle[i],
-                    ads1220_cs_gpio_n[i],
+    for (i = 0; i < BXL_D_LC_ADS1220_NUMBER; ++i)
+    {
+        ADS1220Init(ads1220_handle[i], ads1220_cs_gpio_n[i],
                     &(BXL_D_LC_F28069_Spib_assert_cs),
                     &(BXL_D_LC_F28069_Spib_tx_byte),
                     &(BXL_D_LC_F28069_Spib_rx_byte));
@@ -300,25 +298,29 @@ void main(void)
     //openlcd.update_flag = 1;
     //-------------------------------------
 
-    traveSM.SETTING.bit.m_avg_decimation_output_rate = 2;
+    traveSM.SETTING.bit.m_avg_decimation_output_rate = 1;
     traveSM.SETTING.bit.m_avg_len = 3;    //16
-    traveSM.SETTING.bit.m_avg_input = 1;
+    traveSM.SETTING.bit.m_avg_input = 0;
 
     traveSM.SETTING.bit.start_stop_mode = START_STOP_MODE_AUTO;
-    traveSM.SETTING.bit.stop_input = 2;
-    traveSM.SETTING.bit.start_input = 4;
+    traveSM.SETTING.bit.stop_input = 0;
+    traveSM.SETTING.bit.start_input = 0;
     traveSM.start_force_threshold = 5.0;
     traveSM.stop_force_threshold = 2.0;
+    TSM_setup_start_stop(&traveSM);
 
-    setup_start_stop(&traveSM);
-
-    traveSM.offset[0] = 20655545;
-    traveSM.offset[1] = 20655545;
-    traveSM.calibration[0] = 826.314819;
-    traveSM.calibration[1] = 826.314819;
-
+    traveSM.SETTING.bit.lc_calibration=0;
+    traveSM.SETTING.bit.lc_offset_calc=0;
+    traveSM.lc_calibration[0] = LC0_CAL_AT_1Kg;
+    traveSM.lc_calibration[1] = LC1_CAL_AT_1Kg;
     traveSM.calibration_constant = 15.0f;
     traveSM.sd_stability_threshold = 0.001f;
+    traveSM.tare_cal_wait_seconds= 2;
+
+    ads1220_handle[0]->offset = LC0_OFFSET;
+    ads1220_handle[1]->offset= LC1_OFFSET;
+    ads1220_handle[0]->calibration= LC0_CAL_AT_1Kg;
+    ads1220_handle[1]->calibration= LC1_CAL_AT_1Kg;
 
     traveSM.state = IDLE;
     traveSM.CTRL.all = 0;
@@ -346,9 +348,11 @@ void main(void)
                 traveSM.CTRL.bit.T_IDLE = 0;
                 msg_notify_out.header.bit.state = traveSM.state;
                 msg_notify_out.header.bit.notification =
-                        TRANSITION_NOTIFICATION;
+                TRANSITION_NOTIFICATION;
                 ECan_sendNotifyMBox(&msg_notify_out);
                 msg_notify_out.header.bit.reply_id = 0;
+                LED_D10_BLUE = 0;
+
             }
             // setup
             if (traveSM.CTRL.bit.SETUP != SETUP_NONE)
@@ -360,7 +364,7 @@ void main(void)
                 {
                 case SETUP_MAVG:
 
-                    setup_MAVG(&traveSM);
+                    TSM_setup_MAVG(&traveSM);
                     for (i = 0; i < 2; ++i)
                     {
                         M_AVG_setup(m_avg_obj_handler[i], traveSM.m_avg_len,
@@ -377,10 +381,16 @@ void main(void)
                     break;
 
                 case SETUP_START_STOP:
-                    setup_start_stop(&traveSM);
+                    TSM_setup_start_stop(&traveSM);
                     msg_notify_out.data = traveSM.SETTING.all;
                     break;
                 case SETUP_REC_START_VALUE:
+                    msg_notify_out.data = traveSM.SETTING.all;
+                    break;
+                case SETUP_REC_STOP_VALUE:
+                    msg_notify_out.data = traveSM.SETTING.all;
+                    break;
+                case SETUP_REC_STOP_VALUE:
                     msg_notify_out.data = traveSM.SETTING.all;
                     break;
                 case SETUP_REC_STOP_VALUE:
@@ -416,20 +426,20 @@ void main(void)
                 case SETUP_CTRL + SETUP_MAVG:
                     traveSM.CTRL.bit.SETUP = SETUP_MAVG;
                     traveSM.SETTING.all &= ~SETTINGS_MAVG_MASK;
-                    traveSM.SETTING.all |= msg_ctrl_in.data
-                            & SETTINGS_MAVG_MASK;
+                    traveSM.SETTING.all |=
+                            msg_ctrl_in.data & SETTINGS_MAVG_MASK;
                     break;
                 case GET_REG_CTRL + 1:
                     msg_notify_out.data = traveSM.SETTING.all;
                     msg_notify_out.header.bit.notification =
-                            GET_REG_NOTIFICATION;
+                    GET_REG_NOTIFICATION;
                     msg_notify_out.header.bit.set_get = 1;
                     ECan_sendNotifyMBox(&msg_notify_out);
                     break;
                 case GET_REG_CTRL + 2:
                     msg_notify_out.data = traveSM.calibration_constant;
                     msg_notify_out.header.bit.notification =
-                            GET_REG_NOTIFICATION;
+                    GET_REG_NOTIFICATION;
                     msg_notify_out.header.bit.set_get = 2;
                     ECan_sendNotifyMBox(&msg_notify_out);
                     break;
@@ -437,12 +447,12 @@ void main(void)
                     if (msg_ctrl_in.ctrl.bit.ctrl < TRANSITION_CTRL + 9)
                     {
                         msg_notify_out.header.bit.notification =
-                                ERROR_NOTIFICATION + ERR_TRANSITION_NOT_ALLOWED;
+                        ERROR_NOTIFICATION + ERR_TRANSITION_NOT_ALLOWED;
                     }
                     else
                     {
                         msg_notify_out.header.bit.notification =
-                                ERROR_NOTIFICATION + ERR_INVALID_CTRL;
+                        ERROR_NOTIFICATION + ERR_INVALID_CTRL;
                     }
                     ECan_sendNotifyMBox(&msg_notify_out);
                     msg_notify_out.header.bit.reply_id = 0;
@@ -462,6 +472,7 @@ void main(void)
             }
             else if (traveSM.CTRL.bit.T_MES_WAIT)
             {
+                LED_D10_BLUE = 1;
                 traveSM.state = MES_WAIT;
             }
             break;
@@ -473,11 +484,10 @@ void main(void)
                 traveSM.CTRL.bit.T_MES_WAIT = 0;
                 msg_notify_out.header.bit.state = traveSM.state;
                 msg_notify_out.header.bit.notification =
-                        TRANSITION_NOTIFICATION;
+                TRANSITION_NOTIFICATION;
                 ECan_sendNotifyMBox(&msg_notify_out);
 
                 msg_notify_out.header.bit.reply_id = 0;
-                LED_D10_BLUE = 0;
                 traveSM.acquire_counter = 0;
                 stream_flag = 1;
                 mes_wait_flag = 1;
@@ -505,17 +515,22 @@ void main(void)
                 }
 
             }
+            if (flag_500_ms) {
+                flag_500_ms=0;
+                LED_D9_RED=!LED_D9_RED;
+            }
             //Transitions
             if (traveSM.CTRL.bit.T_IDLE)
             {    //reset
                 traveSM.state = IDLE;
-                LED_D10_BLUE = 1;
+                LED_D9_RED = 1;
                 mes_wait_flag = 0;
             }
             else if (traveSM.CTRL.bit.T_MES_ACQ)
             {    //reset
                 traveSM.state = MES_ACQ;
                 mes_wait_flag = 0;
+                LED_D9_RED = 1;
             }
             break;
 
@@ -527,14 +542,14 @@ void main(void)
                 LED_D9_RED = 0;
                 msg_notify_out.header.bit.state = traveSM.state;
                 msg_notify_out.header.bit.notification =
-                        TRANSITION_NOTIFICATION;
+                TRANSITION_NOTIFICATION;
                 ECan_sendNotifyMBox(&msg_notify_out);
 
                 msg_notify_out.header.bit.reply_id = 0;
                 wait_for_m_avg_cycles = WAIT_FOR_SR400_CYCLES_STOP;
                 mes_acq_flag = 1;
             }
-             //Auto stop  Transitions
+            //Auto stop  Transitions
             if (mes_acq_flag == 0)
             {
                 traveSM.CTRL.bit.T_MES_STOP = 1;
@@ -579,7 +594,7 @@ void main(void)
                 traveSM.CTRL.bit.T_MES_STOP = 0;
                 msg_notify_out.header.bit.state = traveSM.state;
                 msg_notify_out.header.bit.notification =
-                        TRANSITION_NOTIFICATION;
+                TRANSITION_NOTIFICATION;
                 ECan_sendNotifyMBox(&msg_notify_out);
 
             }
@@ -616,18 +631,20 @@ void main(void)
                 traveSM.CTRL.bit.T_TARE = 0;
                 msg_notify_out.header.bit.state = traveSM.state;
                 msg_notify_out.header.bit.notification =
-                        TRANSITION_NOTIFICATION;
+                TRANSITION_NOTIFICATION;
                 ECan_sendNotifyMBox(&msg_notify_out);
 
                 msg_notify_out.header.bit.reply_id = 0;
-
-                wait_for_m_avg_cycles = traveSM.tare_cal_wait_mAvg_cycles; //2sec
-
+                //setup ads1220 to calibrate
+                tare_cal_lc=traveSM.SETTING.bit.lc_offset_calc;
+                ads1220_handle[tare_cal_lc]->oc_counter_max=traveSM.tare_cal_wait_seconds*BXL_D_LC_ADS1220_DATARATE;
                 stream_flag = 1;
-                accumulator=_IQ30(0.0);
-                tare_cal_lc = 0;
+                ads1220_handle[tare_cal_lc]->oc_flag=ADS1220_OFFSET_CALC;
                 tare_cal_flag = 1;
-
+            }
+            if (flag_500_ms) {
+                flag_500_ms=0;
+                LED_D9_RED=!LED_D9_RED;
             }
             if (msg_in_flag)
             {
@@ -639,22 +656,16 @@ void main(void)
                 msg_notify_out.header.bit.reply_id = 0;
 
             }
-
             // exit
-            if (tare_cal_flag == 0)
-            {
-                if (tare_cal_lc == 0)
-                {
-                    wait_for_m_avg_cycles = traveSM.tare_cal_wait_mAvg_cycles; //2sec
-                    accumulator=_IQ30(0.0);
-                    tare_cal_lc = 1;
-                    tare_cal_flag = 1;
-                }
-                else if (tare_cal_lc == 1)
-                {
-                    tare_cal_lc = 2;
-                }
-            }
+            if (ads1220_handle[tare_cal_lc]->oc_flag == 0)
+              {
+                  traveSM.lc_calibration[tare_cal_lc]=ads1220_handle[tare_cal_lc]->calibration*traveSM.calibration_constant;
+                  stream_flag = 0;
+                  tare_cal_flag = 0;
+                  traveSM.CTRL.bit.T_IDLE = 1;
+                  traveSM.state = IDLE;
+                  LED_D9_RED=1;
+              }
 
             break;
 
@@ -665,16 +676,20 @@ void main(void)
                 traveSM.CTRL.bit.T_CAL = 0;
                 msg_notify_out.header.bit.state = traveSM.state;
                 msg_notify_out.header.bit.notification =
-                        TRANSITION_NOTIFICATION;
+                TRANSITION_NOTIFICATION;
                 ECan_sendNotifyMBox(&msg_notify_out);
 
                 msg_notify_out.header.bit.reply_id = 0;
-
-                wait_for_m_avg_cycles = traveSM.tare_cal_wait_mAvg_cycles; //2sec
+                //setup ads1220 to calibrate
+                tare_cal_lc=traveSM.SETTING.bit.lc_offset_calc;
+                ads1220_handle[tare_cal_lc]->oc_counter_max=traveSM.tare_cal_wait_seconds*BXL_D_LC_ADS1220_DATARATE;
                 stream_flag = 1;
-                accumulator=_IQ30(0.0);
-                tare_cal_lc = 0;
+                ads1220_handle[tare_cal_lc]->oc_flag=ADS1220_CALIBRATE;
                 tare_cal_flag = 1;
+            }
+            if (flag_500_ms) {
+                flag_500_ms=0;
+                LED_D9_RED=!LED_D9_RED;
             }
             if (msg_in_flag)
             {
@@ -682,37 +697,17 @@ void main(void)
                 msg_notify_out.header.bit.state = traveSM.state;
                 msg_notify_out.header.bit.notification = ERROR_NOTIFICATION;
                 ECan_sendNotifyMBox(&msg_notify_out);
-
                 msg_notify_out.header.bit.reply_id = 0;
 
             }
-            if (flag_100_ms)
+            if (ads1220_handle[tare_cal_lc]->oc_flag == 0)
             {
-                flag_100_ms = 0;
-
-            }
-            if (tare_cal_flag == 0)
-            {
-                if (tare_cal_lc == 0)
-                {
-                    wait_for_m_avg_cycles = traveSM.tare_cal_wait_mAvg_cycles; //2sec
-                    accumulator=_IQ30(0.0);
-                    tare_cal_lc = 1;
-                    tare_cal_flag = 1;
-                }
-                else if (tare_cal_lc == 1)
-                {
-                    tare_cal_lc = 2;
-                }
-            }
-            // exit
-
-            if(1)//eys.pressed.esc)
-            {
+                traveSM.lc_calibration[tare_cal_lc]=ads1220_handle[tare_cal_lc]->calibration*traveSM.calibration_constant;
+                stream_flag = 0;
                 tare_cal_flag = 0;
-                //keys.pressed.esc = 0;
                 traveSM.CTRL.bit.T_IDLE = 1;
                 traveSM.state = IDLE;
+                LED_D9_RED=1;
             }
             break;
         }
@@ -732,200 +727,126 @@ void main(void)
             msg_in_flag = ECan_getCTRLMBoxData(&msg_ctrl_in);
             msg_in_flag = 1;
         }
-
     }
 }
 
-
-__interrupt void
-xint1_isr(void)
+__interrupt void xint1_isr(void)
 {
     uint16_t i;
-    static uint16_t process_count = 0;
     static uint16_t sr_400_count = 0;
+    msg_data_header_t msg_data_header;
     //GpioDataRegs.GPBCLEAR.all = 0x4;   // GPIO34 is low
     DEBUG_GPIO5 = 1;
     Xint1Count++;
-    if (++process_count == BXL_D_LC_DATARATE)
-    {
-        process_count = 0;
-        sr_400_count = 0;
-    }
-
     for (i = 0; i < 2; ++i)
     {
         ADS1220ReadData(ads1220_handle[i]);
+        //multiply by two because of different output format
+        fir_handle[i]->input = ads1220_handle[i]->data;
+        FIR32_alt_calc(fir_handle[i]);
+        force_handle[i]->sr400 = ads1220_handle[i]->data* traveSM.lc_calibration[i];
     }
-    //
-    // Acknowledge this interrupt to get more from group 1
-    //
-    DEBUG_GPIO5 = 0;
-    PieCtrlRegs.PIEACK.all = PIEACK_GROUP1;
-}
-
-/*
-__interrupt void epwm3_timer_isr(void)
-{
-    static uint16_t process_count = 0;
-    static uint16_t sr_400_count = 0;
-    static int32_t ads1246_conversion[2];
-    msg_data_header_t msg_data_header;
-    uint16_t i;
-
-    DEBUG_GPIO5 = 1;
-    //
-    if (++process_count == PROCESS_COUNTER_RESET)
+    //msg_data_header
+    if (sr_400_count == BXL_D_LC_DATARATE*DATA_COUNTER_RESET_SECONDS)
     {
-        process_count = 0;
         sr_400_count = 0;
     }
-    // run filters
+    msg_data_header.bit.isr_state = (mes_acq_flag << 1) + (mes_wait_flag)
+            + (tare_cal_flag << (2 + tare_cal_flag));
+    msg_data_header.bit.counter = (0x0fff & sr_400_count);
 
-    //---------------------
-    //filter and decimation
-    //---------------------
-    //Decimation by 4 to 400Hz SR
-    if (process_count % DECIMATION_FACTOR_1600_TO_400 == 0)
-    {   //Start 400Hz Loop
+    if (stream_flag)
+    {
+        TSM_write_and_send_stream_mbox(
+        MSG_SR400_MBOX,
+                                   msg_data_header.all,
+                                   (force_handle[0]->sr400 * FLOAT2INT_FACTOR),
+                                   (force_handle[1]->sr400 * FLOAT2INT_FACTOR));
+    }
 
-        //msg_data_header
-        msg_data_header.bit.isr_state = (mes_acq_flag << 1) + (mes_wait_flag)
-                + (tare_cal_flag << (2+tare_cal_flag));
-        msg_data_header.bit.counter = (0x0fff & sr_400_count);
-
-        if (mes_acq_flag)
-        {
-            traveSM.acquire_counter++;
-        }
-        //
+    if ((sr_400_count % LPF__DECIMATION_FACTOR) == 0)
+    {
         for (i = 0; i < 2; ++i)
         {
-            force_handle[i]->sr400 = _IQ30toF(lpf_1600_to_400_handle[i]->output)
-                    * traveSM.calibration[i];
-            //multiply by two because of different output format
-            lpf_handle[i]->input = _IQmpy2(lpf_1600_to_400_handle[i]->output);
-            FIR32_alt_calc(lpf_handle[i]);
+            force_handle[i]->fir_out = _IQ30toF(fir_handle[i]->output)
+                    * traveSM.lc_calibration[i];
         }
         //run cascaded filter
 
         if (stream_flag)
         {
-            write_and_send_stream_mbox(
-                    MSG_SR400_MBOX, msg_data_header.all,
-                    (force_handle[0]->sr400 * FLOAT2INT_FACTOR),
-                    (force_handle[1]->sr400 * FLOAT2INT_FACTOR));
+            TSM_write_and_send_stream_mbox(
+                    MSG_SR100_MBOX, msg_data_header.all,
+                    (force_handle[0]->fir_out * FLOAT2INT_FACTOR),
+                    (force_handle[1]->fir_out * FLOAT2INT_FACTOR));
         }
-
-        if (process_count
-                % (DECIMATION_FACTOR_1600_TO_400 * LPF__DECIMATION_FACTOR) == 0)
-        {
-            for (i = 0; i < 2; ++i)
-            {
-                force_handle[i]->sr100 = _IQ30toF(lpf_handle[i]->output)
-                        * traveSM.calibration[i];
-            }
-            //run cascaded filter
-
-            if (stream_flag)
-            {
-                write_and_send_stream_mbox(
-                        MSG_SR100_MBOX, msg_data_header.all,
-                        (force_handle[0]->sr100 * FLOAT2INT_FACTOR),
-                        (force_handle[1]->sr100 * FLOAT2INT_FACTOR));
-            }
-        }
-        //Decimation moving average rate
-        if (process_count % traveSM.m_avg_decimation_input_rate == 0)
-        {
-            for (i = 0; i < 2; ++i)
-            {
-                M_AVG_run(m_avg_obj_handler[i]);
-                force_handle[i]->movingAvg = _IQ30toF(m_avg_obj_handler[i]->avg)
-                        * traveSM.calibration[i];
-                force_handle[i]->movingSd = _IQ30toF(m_avg_obj_handler[i]->var)
-                        * traveSM.calibration[i];
-
-            }
-            //tare or calibrate load cell sequentially
-            if (tare_cal_flag)
-            {
-                if (force_handle[tare_cal_lc]->movingSd
-                        >= traveSM.sd_stability_threshold)
-                {
-                    wait_for_m_avg_cycles =
-                            traveSM.tare_cal_wait_mAvg_cycles;
-                    accumulator=_IQ30(0.0);
-                }else{
-                    accumulator += _IQ30mpy( m_avg_obj_handler[tare_cal_lc]->avg , _IQ30(1.0/traveSM.tare_cal_wait_mAvg_cycles));
-                }
-                if (wait_for_m_avg_cycles-- == 0)
-                { //set offset
-                    tare_cal_flag = 0;
-                    if (traveSM.state == TARE)
-                    {
-                        traveSM.offset[tare_cal_lc] += _IQmpy2(accumulator);
-                    }
-                    else if (traveSM.state == CAL)
-                    {
-                        traveSM.calibration[tare_cal_lc] =
-                                traveSM.calibration_constant
-                                        / _IQ30toF(accumulator);
-                    }
-                }
-
-            }
-            //send
-            if (stream_flag
-                    & (process_count % traveSM.m_avg_decimation_output_rate == 0))
-            {
-                write_and_send_stream_mbox(
-                        MSG_MAVG_MBOX, msg_data_header.all,
-                        (force_handle[0]->movingAvg * FLOAT2INT_FACTOR),
-                        (force_handle[1]->movingAvg * FLOAT2INT_FACTOR));
-                write_and_send_stream_mbox(
-                        MSG_MSD_MBOX, msg_data_header.all,
-                        (force_handle[0]->movingSd * FLOAT2INT_FACTOR),
-                        (force_handle[1]->movingSd * FLOAT2INT_FACTOR));
-            }
-            //End MAVG
-        }
-        //mean value of both adc
-        traveSM.force.sr400 = (force_handle[0]->sr400 + force_handle[1]->sr400)
-                / 2.0;
-        traveSM.force.movingAvg = (force_handle[0]->movingAvg
-                + force_handle[1]->movingAvg) / 2.0;
-        traveSM.force.movingSd = (force_handle[0]->movingSd
-                + force_handle[1]->movingSd) / 2.0;
-        //start stop conditions
-        if (traveSM.SETTING.bit.start_stop_mode == START_STOP_MODE_AUTO)
-        {
-            if (mes_wait_flag)
-            {
-                if (*traveSM.start_value_p > traveSM.start_force_threshold)
-                {
-                    mes_wait_flag = 0;
-                }
-
-            }
-            else if (mes_acq_flag)
-            { //stop condition
-                if (*traveSM.stop_value_p > traveSM.stop_force_threshold)
-                {
-                    wait_for_sr400_cycles = traveSM.stop_wait_sr400_cycles;
-                    //TODO:sd stop
-                }
-                if (wait_for_sr400_cycles-- == 0)
-                { //set offset
-                    mes_acq_flag = 0;
-                }
-            }
-        }
-        sr_400_count++;
-        //End 400Hz Loop
     }
+    //Decimation moving average rate
+    if ((sr_400_count % traveSM.m_avg_decimation_input_rate )== 0)
+    {
+        for (i = 0; i < 2; ++i)
+        {
+            M_AVG_run(m_avg_obj_handler[i]);
+            force_handle[i]->movingAvg = _IQ30toF(m_avg_obj_handler[i]->avg)
+                    * traveSM.lc_calibration[i];
+            force_handle[i]->movingSd = _IQ30toF(m_avg_obj_handler[i]->var)
+                    * traveSM.lc_calibration[i];
 
+        }
+        //send
+        if (stream_flag
+                & (sr_400_count % traveSM.m_avg_decimation_output_rate == 0))
+        {
+            TSM_write_and_send_stream_mbox(
+                    MSG_MAVG_MBOX, msg_data_header.all,
+                    (force_handle[0]->movingAvg * FLOAT2INT_FACTOR),
+                    (force_handle[1]->movingAvg * FLOAT2INT_FACTOR));
+            TSM_write_and_send_stream_mbox(
+                    MSG_MSD_MBOX, msg_data_header.all,
+                    (force_handle[0]->movingSd * FLOAT2INT_FACTOR),
+                    (force_handle[1]->movingSd * FLOAT2INT_FACTOR));
+        }
+        //End MAVG
+    }
+    //mean value of both adc
+    traveSM.force.sr400 = (force_handle[0]->sr400 + force_handle[1]->sr400)
+            / 2.0;
+    traveSM.force.fir_out = (force_handle[0]->fir_out
+            + force_handle[1]->fir_out) / 2.0;
+    traveSM.force.movingAvg = (force_handle[0]->movingAvg
+            + force_handle[1]->movingAvg) / 2.0;
+    traveSM.force.movingSd = (force_handle[0]->movingSd
+            + force_handle[1]->movingSd) / 2.0;
+
+    //start stop conditions
+    if (traveSM.SETTING.bit.start_stop_mode == START_STOP_MODE_AUTO)
+    {
+        if (mes_wait_flag)
+        {
+            if (*traveSM.start_value_p > traveSM.start_force_threshold)
+            {
+                mes_wait_flag = 0;
+            }
+
+        }
+        else if (mes_acq_flag)
+        { //stop condition
+            if (*traveSM.stop_value_p > traveSM.stop_force_threshold)
+            {
+                wait_for_sr400_cycles = traveSM.stop_wait_sr400_cycles;
+                //TODO:sd stop
+            }
+            if (wait_for_sr400_cycles-- == 0)
+            { //set offset
+                mes_acq_flag = 0;
+            }
+        }
+    }
+    sr_400_count++;
+    // Acknowledge this interrupt to get more from group 1
+    DEBUG_GPIO5 = 0;
+    PieCtrlRegs.PIEACK.all = PIEACK_GROUP1;
 }
-*/
 
 __interrupt void cpu_timer1_isr(void)
 {
@@ -941,10 +862,12 @@ __interrupt void cpu_timer1_isr(void)
     {
         flag_100_ms = 1;
     }
+    if (decimation_counter % TIMER_1_ISR_DECIMATION_500_MS == 0)
+    {
+        flag_500_ms = 1;
+    }
     PieCtrlRegs.PIEACK.all = PIEACK_GROUP1;
 }
-
-
 
 void GPIO_init(void)
 {
@@ -970,29 +893,34 @@ void GPIO_init(void)
     //----------------
 }
 
-void setup_MAVG(volatile TraveSM_t *tSM)
+void TSM_setup_MAVG(volatile TraveSM_t *tSM)
 {
     uint16_t i;
     //moving_avg_init
     tSM->m_avg_len = 1 << (tSM->SETTING.bit.m_avg_len + 1);
     switch (tSM->SETTING.bit.m_avg_input)
     {
+    case 0:
+        for (i = 0; i < 2; ++i)
+        {
+            tSM->m_avg_input_p[i] = &(ads1220_handle[i]->data);
+        }
+        tSM->m_avg_decimation_input_rate=0;
+        break;
     case 1:
         for (i = 0; i < 2; ++i)
         {
-            tSM->m_avg_input_p[i] = &(lpf_handle[i]->output);
+            tSM->m_avg_input_p[i] = &(fir_handle[i]->output);
         }
-        tSM->m_avg_decimation_input_rate =
-        DECIMATION_FACTOR_1600_TO_400 * LPF__DECIMATION_FACTOR;
+        tSM->m_avg_decimation_input_rate = LPF__DECIMATION_FACTOR;
         break;
     }
     tSM->m_avg_decimation_output_rate = 1
             << (tSM->SETTING.bit.m_avg_decimation_output_rate);
-    tSM->tare_cal_wait_mAvg_cycles =200; //WAIT_FOR_TARE_CAL_s
-            //* (1600 / tSM->m_avg_decimation_input_rate);
+    //* (1600 / tSM->m_avg_decimation_input_rate);
 }
 
-void setup_start_stop(volatile TraveSM_t *tSM)
+void TSM_setup_start_stop(volatile TraveSM_t *tSM)
 {
     //start stop mode setup
 
@@ -1002,15 +930,9 @@ void setup_start_stop(volatile TraveSM_t *tSM)
         tSM->start_value_p = &tSM->force.sr400;
         break;
     case 1:
-        tSM->start_value_p = &tSM->force.sr200;
+        tSM->start_value_p = &tSM->force.fir_out;
         break;
     case 2:
-        tSM->start_value_p = &tSM->force.sr100;
-        break;
-    case 3:
-        tSM->start_value_p = &tSM->force.sr50;
-        break;
-    case 4:
         tSM->start_value_p = &tSM->force.movingAvg;
         break;
     }
@@ -1018,19 +940,13 @@ void setup_start_stop(volatile TraveSM_t *tSM)
     switch (tSM->SETTING.bit.stop_input)
     {
     case 0:
-        tSM->stop_value_p = &tSM->force.sr400;
+        tSM->start_value_p = &tSM->force.sr400;
         break;
     case 1:
-        tSM->stop_value_p = &tSM->force.sr200;
+        tSM->start_value_p = &tSM->force.fir_out;
         break;
     case 2:
-        tSM->stop_value_p = &tSM->force.sr100;
-        break;
-    case 3:
-        tSM->stop_value_p = &tSM->force.sr50;
-        break;
-    case 4:
-        tSM->stop_value_p = &tSM->force.movingAvg;
+        tSM->start_value_p = &tSM->force.movingAvg;
         break;
     }
     tSM->stop_wait_sr400_cycles = WAIT_FOR_SR400_CYCLES_STOP;
@@ -1039,7 +955,7 @@ void setup_start_stop(volatile TraveSM_t *tSM)
 
 //
 
-void write_and_send_stream_mbox(uint16_t mbox_n, uint16_t header, float32 v1,
+void TSM_write_and_send_stream_mbox(uint16_t mbox_n, uint16_t header, float32 v1,
                                 float32 v2)
 {
     volatile struct MBOX *Mailbox_p = &ECanaMboxes.MBOX0 + mbox_n;
@@ -1048,7 +964,6 @@ void write_and_send_stream_mbox(uint16_t mbox_n, uint16_t header, float32 v1,
     Mailbox_p->MDH.word.HI_WORD = (int16_t) v2; //
     ECan_sendMBox(mbox_n);
 }
-
 
 // End of File
 //

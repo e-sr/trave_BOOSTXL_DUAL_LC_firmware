@@ -4,6 +4,7 @@
  *  Created on: May 30, 2018
  *      Author: esr
  */
+
 #include <stdint.h>
 
 
@@ -43,6 +44,13 @@
 
 #define ERR_INVALID_CTRL 1
 #define ERR_TRANSITION_NOT_ALLOWED 2
+
+#define LC1_OFFSET 22726
+#define LC1_CAL_AT_1Kg (5.14615058e-05)
+
+
+#define LC0_OFFSET 43629 //
+#define LC0_CAL_AT_1Kg (5.14615058e-05)
 
 typedef enum _setup_ {
     none=0,
@@ -98,9 +106,9 @@ typedef enum _setup_ {
 #define MSG_SR400_MBOX  2
 #define MSG_SR400_LEN   6
 
-#define MSG_SR200_ID    4
-#define MSG_SR200_MBOX  3
-#define MSG_SR200_LEN   6
+#define MSG_SRFIR_ID    4
+#define MSG_SRFIR_MBOX  3
+#define MSG_SRFIR_LEN   6
 
 #define MSG_SR100_ID    5
 #define MSG_SR100_MBOX  4
@@ -138,7 +146,11 @@ struct SETTINGS_BITS
     uint32_t start_input:3;
     uint32_t stop_input:3;
     //
-    uint32_t rsvd :16;
+    uint32_t lc_calibration:3;
+    uint32_t lc_offset_calc:3;
+
+    //
+    uint32_t rsvd :10;
 };
 
 union SETTINGS_REG
@@ -178,8 +190,9 @@ struct CTRL_BITS
     uint16_t T_MES_WAIT :1;
     uint16_t T_MES_ACQ :1;
     uint16_t T_MES_STOP :1;
-    uint16_t T_SETTINGS :1;
-    uint16_t T_SCALE :1;
+    //uint16_t T_SETTINGS :1;
+    //uint16_t T_SCALE :1;
+    uint16_t rsvd : 2;
     uint16_t SETUP :8;
 };
 
@@ -198,9 +211,7 @@ union CTRL_REG
 typedef struct _F_t
 {
     float sr400;
-    float sr100;
-    float sr200;
-    float sr50;
+    float fir_out;
     float movingAvg;
     float movingSd;
 } F_t;
@@ -209,6 +220,7 @@ typedef F_t *F_t_handle;
 
 
 #define REG_SETTINGS 0
+
 typedef volatile struct _TraveSM_
 {
     //Control
@@ -218,10 +230,9 @@ typedef volatile struct _TraveSM_
     uint16_t state;
     float calibration_constant; //10Kg
     float sd_stability_threshold;
-    uint32_t tare_cal_wait_mAvg_cycles;
+    uint32_t tare_cal_wait_seconds;
     //
-    uint32_t offset[2];
-    float calibration[2];
+    float lc_calibration[2];
     // start stop threshold
     volatile float *start_value_p;
     volatile float *stop_value_p;
@@ -313,13 +324,14 @@ typedef struct _msg_notify_
 }msg_notify_t ;
 
 
-void key_press_init(volatile keys_t *keys,  volatile uint32_t *gpio_data_regs,uint32_t mask);
-void key_press_debounce(volatile keys_t *keys);
-int16_t key_get_rotations_clicks(volatile keys_t *keys);
+
 void run_IDLE_menu(volatile TraveSM_t *tSM,volatile keys_t *key, uint16_t reset);
 uint16_t run_SETTINGS_menu(volatile TraveSM_t *tSM, volatile keys_t *key,msg_notify_t* msg_notify,
                        uint16_t reset);
-uint16_t add_value_clicks(uint16_t value,uint16_t clicks, uint16_t min, uint16_t max);
 
+void TSM_setup_start_stop(volatile TraveSM_t *tSM);
+void TSM_write_and_send_stream_mbox(uint16_t mbox_n, uint16_t header, float32 v1,
+                                float32 v2);
+void TSM_setup_MAVG(volatile TraveSM_t *tSM);
 
 #endif /* LOADCELL_H_ */
