@@ -38,19 +38,18 @@
 #define SETUP_NONE 0
 #define SETUP_MAVG 1
 #define SETUP_START_STOP 2
-#define SETUP_SETTINGS 3
-#define SETUP_REC_START_VALUE 4
-#define SETUP_REC_STOP_VALUE 5
+#define SETUP_TARE_CAL 3
 
 #define ERR_INVALID_CTRL 1
 #define ERR_TRANSITION_NOT_ALLOWED 2
+#define ERR_MSG_NOT_HANDLED 3
 
-#define LC1_OFFSET 22726
-#define LC1_CAL_AT_1Kg (5.14615058e-05)
+#define LC1_OFFSET 26726
+#define LC1_CAL_AT_1Kg (4.98446534e-05)
 
 
 #define LC0_OFFSET 43629 //
-#define LC0_CAL_AT_1Kg (5.14615058e-05)
+#define LC0_CAL_AT_1Kg (5.01873656e-05)
 
 typedef enum _setup_ {
     none=0,
@@ -86,6 +85,13 @@ typedef enum _setup_ {
 #define SET_REG_CTRL 20
 #define GET_REG_CTRL 30
 
+#define TSM_CTRL_ADDR 0
+#define TSM_MAVG_SETTINGS_ADDR 1
+#define TSM_START_STOP_SETTINGS_ADDR 2
+#define TSM_TARE_CAL_SETTINGS_ADDR 3
+#define TSM_CALIBRATION_0_ADDR 4
+#define TSM_CALIBRATION_1_ADDR 5
+
 //NOTIFY MESSAGE GROUPS
 #define NONE_NOTIFICATION 0
 #define TRANSITION_NOTIFICATION 1
@@ -98,25 +104,18 @@ typedef enum _setup_ {
 #define MSG_CTRL_MBOX   0
 #define MSG_CTRL_LEN    6
 
-#define MSG_STATUS_ID   1
-#define MSG_STATUS_MBOX 1
-#define MSG_STATUS_LEN  8
+#define MSG_NOTIFY_ID   1
+#define MSG_NOTIFY_MBOX 1
+#define MSG_NOTIFY_LEN  8
 
 #define MSG_SR400_ID    3
 #define MSG_SR400_MBOX  2
 #define MSG_SR400_LEN   6
 
-#define MSG_SRFIR_ID    4
-#define MSG_SRFIR_MBOX  3
-#define MSG_SRFIR_LEN   6
+#define MSG_FIR_ID    4
+#define MSG_FIR_MBOX  3
+#define MSG_FIR_LEN   6
 
-#define MSG_SR100_ID    5
-#define MSG_SR100_MBOX  4
-#define MSG_SR100_LEN   6
-
-#define MSG_SR50_ID    6
-#define MSG_SR50_MBOX  5
-#define MSG_SR50_LEN   6
 
 #define MSG_MAVG_ID    7
 #define MSG_MAVG_MBOX  6
@@ -125,6 +124,10 @@ typedef enum _setup_ {
 #define MSG_MSD_ID    8
 #define MSG_MSD_MBOX  7
 #define MSG_MSD_LEN   6
+
+#define ECAN_MBOX_DIRECTION (1<<MSG_CTRL_MBOX) // 1:TX , 0:RX
+#define ECAN_MBOX_ENABLE ((1<<MSG_CTRL_MBOX) |(1<<MSG_NOTIFY_MBOX)|(1<<MSG_SR400_MBOX)|(1<<MSG_FIR_MBOX)|(1<<MSG_MAVG_MBOX)|(1<<MSG_MSD_MBOX));
+
 
 #define FLOAT2INT_FACTOR 100 //i dati spediti via can bus sono formattati come integer uin16. 1 corrisponde a 10g
 //&&
@@ -136,51 +139,55 @@ typedef enum _setup_ {
 
 #define SETTINGS_MAVG_MASK  0x000000ff
 
-struct SETTINGS_BITS
+struct MAVG_SETTINGS_BITS
 {   //first byte
-    uint32_t m_avg_len :3; //m_avg_len = 1<<(m_avg_len+1)
     uint32_t m_avg_input :2; //0-sr400,...,3-sr300
-    uint32_t m_avg_decimation_output_rate:3;
-    //second byte
+    uint32_t m_avg_len :8; //m_avg_len = 1<<(m_avg_len+1)
+    uint32_t m_avg_decimation_output_rate:8;
+    //
+    uint32_t m_avg_tot_decimation :8;
+    uint32_t fir_decimation :6;
+};
+
+typedef union _MAVG_SETTINGS_REG
+{
+    uint32_t all;
+    struct MAVG_SETTINGS_BITS bit;
+} tsm_mavg_settings_t;
+
+struct TARE_CAL_SETTINGS_BITS
+{   //first byte
+    uint32_t lc_calibration:3;
+    uint32_t lc_offset_calc:3;
+    uint32_t tare_cal_wait_seconds :2;
+    uint32_t calibration_value_kg:8;
+    uint32_t tare_cal_sd_stability_threshold:16;
+};
+
+typedef union TARE_CAL_SETTINGS_REG
+{
+    uint32_t all;
+    struct TARE_CAL_SETTINGS_BITS bit;
+} tsm_tare_cal_settings_t;
+
+
+struct START_STOP_SETTINGS_BITS
+{   //first byte
     uint32_t start_stop_mode:2;
     uint32_t start_input:3;
     uint32_t stop_input:3;
     //
-    uint32_t lc_calibration:3;
-    uint32_t lc_offset_calc:3;
-
+    uint32_t start_value:8;
+    uint32_t stop_value:8;
     //
-    uint32_t rsvd :10;
+    uint32_t wait_sr400_cycles :8;
 };
 
-union SETTINGS_REG
+typedef union START_STOP_SETTINGS_REG
 {
     uint32_t all;
-    struct SETTINGS_BITS bit;
-};
-
-//-------------------------------
-//LCD
-
-#define LCD_EMPTY_ROW "                    "
-
-#define LCD_ROW_STATUS 1
-#define LCD_COLUMN_STATE  12
-#define LCD_MENU_ROW1 3
-
-#define LCD_STATE_TEXT {"IDLE    ","TARE    ","CAL     ",\
-    "MES WAIT","ACQUIRE ","MES STOP"}
-
-#define LCD_MES_TEXT_START 20
-#define LCD_MES_TEXT "Force(kg):            Time(s): "
-#define LCD_FORCE_START (20+12)
-#define LCD_TIME_START (40+12)
-#define LCD_MES_STOP_TEXT "ForceMax(kg):       Time(s): "
-#define LCD_TARE_CAL_START 20
-#define LCD_TARE_CAL_TEXT "Variance: "
-#define LCD_SD_START (20+12)
-//------------------------------------------------------------
-
+    struct START_STOP_SETTINGS_BITS bit;
+}tsm_mavg_start_stop_settings_t;;
 
 struct CTRL_BITS
 {
@@ -193,14 +200,14 @@ struct CTRL_BITS
     //uint16_t T_SETTINGS :1;
     //uint16_t T_SCALE :1;
     uint16_t rsvd : 2;
-    uint16_t SETUP :8;
+    uint16_t SETUP_flag :8;
 };
 
-union CTRL_REG
+typedef union CTRL_REG
 {
     uint16_t all;
     struct CTRL_BITS bit;
-};
+}tsm_ctrl_t;;
 
 /*
 //tere are internal and external events
@@ -219,54 +226,37 @@ typedef struct _F_t
 typedef F_t *F_t_handle;
 
 
-#define REG_SETTINGS 0
 
 typedef volatile struct _TraveSM_
 {
-    //Control
-    union CTRL_REG CTRL;
-    union SETTINGS_REG SETTING;
+    //Register
+    ///////////////////////////////////////////////////////
+    uint16_t state;                                     //0
+    tsm_ctrl_t CTRL;                                //1
+    tsm_mavg_settings_t mavg_settings;              //2
+    tsm_mavg_start_stop_settings_t start_stop_settings;  //3
+    tsm_tare_cal_settings_t tare_cal_settings;      //4
     // ADC offset and calibration
-    uint16_t state;
-    float calibration_constant; //10Kg
-    float sd_stability_threshold;
-    uint32_t tare_cal_wait_seconds;
-    //
-    float lc_calibration[2];
+    float lc_calibration[2];                            //6,7
+    /////////////////////////////////////////////////////////
+    // internal
+    uint32_t acquire_counter;
     // start stop threshold
     volatile float *start_value_p;
     volatile float *stop_value_p;
-    uint16_t stop_wait_sr400_cycles;
-    float start_force_threshold;
-    float stop_force_threshold;
-    //
-    uint32_t acquire_counter;
+    volatile float start_value;
+    volatile float stop_value;
     // moving avg parameters
-    uint32_t m_avg_len;
     volatile int32_t *m_avg_input_p[2];
     uint32_t m_avg_decimation_input_rate;
     uint32_t m_avg_decimation_output_rate;
+    //
+    volatile float tare_cal_sd_stability_threshold;
     //force
     F_t force;
 
 } TraveSM_t;
 
-struct KEY_BIT{
-  uint16_t enter:1;
-  uint16_t esc:1;
-  uint16_t rsvd:14;
-};
-typedef struct KEYS
-{
-    struct KEY_BIT pressed;
-    uint32_t _s;
-    uint32_t _state;
-    uint32_t _mask;
-    uint32_t _ct0;
-    uint32_t _ct1;
-    uint32_t _lastPOSCNT;
-    volatile uint32_t *_gpio_data_regs;
-} keys_t;
 
 struct MSG_DATA_HEADER_BITS
 {
@@ -325,13 +315,27 @@ typedef struct _msg_notify_
 
 
 
-void run_IDLE_menu(volatile TraveSM_t *tSM,volatile keys_t *key, uint16_t reset);
-uint16_t run_SETTINGS_menu(volatile TraveSM_t *tSM, volatile keys_t *key,msg_notify_t* msg_notify,
-                       uint16_t reset);
+//void run_IDLE_menu(volatile TraveSM_t *tSM,volatile keys_t *key, uint16_t reset);
+//uint16_t run_SETTINGS_menu(volatile TraveSM_t *tSM, volatile keys_t *key,msg_notify_t* msg_notify,
+//                       uint16_t reset);
 
-void TSM_setup_start_stop(volatile TraveSM_t *tSM);
+void TSM_setup_start_stop_settings(volatile TraveSM_t *tSM);
+
+void TSM_setup_mavg_settings(volatile TraveSM_t *tSM);
+void TSM_setup_tare_cal_settings(volatile TraveSM_t *tSM);
+
 void TSM_write_and_send_stream_mbox(uint16_t mbox_n, uint16_t header, float32 v1,
                                 float32 v2);
-void TSM_setup_MAVG(volatile TraveSM_t *tSM);
+void TSM_handle_msg_in_IDLE(volatile TraveSM_t* tSM, msg_ctrl_t* msg_ctrl,
+                       msg_notify_t* msg_notify);
+
+
+//
+void ECan_init(void);
+void ECan_SetupMbox(void);
+void ECan_setMBoxData(uint16_t mbox_n, uint32_t tx_data[]);
+uint16_t ECan_getCTRLMBoxData(msg_ctrl_t* msg_p);
+void ECan_sendNotifyMBox(msg_notify_t* msg_p);
+void ECan_sendMBox(uint16_t mbox_n);
 
 #endif /* LOADCELL_H_ */

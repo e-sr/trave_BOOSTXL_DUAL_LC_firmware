@@ -57,8 +57,6 @@
 // InitECan - This function initializes the eCAN module to a known state.
 //
 #if DSP28_ECANA
-
-void ECan_sendMBox(uint16_t mbox_n);
 //
 // InitECana - Initialize eCAN-A module
 //
@@ -187,26 +185,16 @@ void ECan_SetupMbox(void)
     Mailbox_p->MSGID.bit.IDE = 1;
     Mailbox_p->MSGCTRL.bit.DLC = MSG_CTRL_LEN;
 
-    Mailbox_p = MBOX_P(MSG_STATUS_MBOX);
-    Mailbox_p->MSGID.all = MSG_STATUS_ID;
+    Mailbox_p = MBOX_P(MSG_NOTIFY_MBOX);
+    Mailbox_p->MSGID.all = MSG_NOTIFY_ID;
     Mailbox_p->MSGID.bit.IDE = 1;
-    Mailbox_p->MSGCTRL.bit.DLC = MSG_STATUS_LEN;
-    /*
-    Mailbox_p = MBOX_P(MSG_SR50_MBOX);
-    Mailbox_p->MSGID.all = MSG_SR50_ID;
+    Mailbox_p->MSGCTRL.bit.DLC = MSG_NOTIFY_LEN;
+
+    Mailbox_p = MBOX_P(MSG_FIR_MBOX);
+    Mailbox_p->MSGID.all = MSG_FIR_ID;
     Mailbox_p->MSGID.bit.IDE = 1;
-    Mailbox_p->MSGCTRL.bit.DLC = MSG_SR50_LEN;
-    */
-    Mailbox_p = MBOX_P(MSG_SR100_MBOX);
-    Mailbox_p->MSGID.all = MSG_SR100_ID;
-    Mailbox_p->MSGID.bit.IDE = 1;
-    Mailbox_p->MSGCTRL.bit.DLC = MSG_SR100_LEN;
-    /*
-    Mailbox_p = MBOX_P(MSG_SR200_MBOX);
-    Mailbox_p->MSGID.all = MSG_SR200_ID;
-    Mailbox_p->MSGID.bit.IDE = 1;
-    Mailbox_p->MSGCTRL.bit.DLC = MSG_SR200_LEN;
-    */
+    Mailbox_p->MSGCTRL.bit.DLC = MSG_FIR_LEN;
+
     Mailbox_p = MBOX_P(MSG_SR400_MBOX);
     Mailbox_p->MSGID.all = MSG_SR400_ID;
     Mailbox_p->MSGID.bit.IDE = 1;
@@ -225,27 +213,12 @@ void ECan_SetupMbox(void)
     //
     // Configure Mailboxes 0,1 as Tx, 2 as Rx
     ECanaShadow.CANMD.all = 0;
-    ECanaShadow.CANMD.bit.MD0 = 1;
-    ECanaShadow.CANMD.bit.MD1 = 0;
-    ECanaShadow.CANMD.bit.MD2 = 0;
-    ECanaShadow.CANMD.bit.MD3 = 0;
-    ECanaShadow.CANMD.bit.MD4 = 0;
-    ECanaShadow.CANMD.bit.MD5 = 0;
-    ECanaShadow.CANMD.bit.MD6 = 0;
-    ECanaShadow.CANMD.bit.MD7 = 0;
+    ECanaShadow.CANMD.all |= ECAN_MBOX_DIRECTION;
 
     ECanaRegs.CANMD.all = ECanaShadow.CANMD.all;
     //
     // Enable Mailboxes
-    ECanaShadow.CANME.all = 0x00000000;
-    ECanaShadow.CANME.bit.ME0 = 1;
-    ECanaShadow.CANME.bit.ME1 = 1;
-    ECanaShadow.CANME.bit.ME2 = 1;
-    ECanaShadow.CANME.bit.ME3 = 1;
-    ECanaShadow.CANME.bit.ME4 = 1;
-    ECanaShadow.CANME.bit.ME5 = 1;
-    ECanaShadow.CANME.bit.ME6 = 1;
-    ECanaShadow.CANME.bit.ME7 = 1;
+    ECanaShadow.CANME.all = ECAN_MBOX_ENABLE;
     ECanaRegs.CANME.all = ECanaShadow.CANME.all;
     //
     // Since this write is to the entire register
@@ -283,11 +256,11 @@ uint16_t ECan_getCTRLMBoxData(msg_ctrl_t* msg_p)
 }
 void ECan_sendNotifyMBox(msg_notify_t* msg_p)
 {
-    volatile struct MBOX *Mailbox_p = MBOX_P(MSG_STATUS_MBOX);
+    volatile struct MBOX *Mailbox_p = MBOX_P(MSG_NOTIFY_MBOX);
     //clear flag
     Mailbox_p->MDL.all=msg_p->header.all;//
     Mailbox_p->MDH.all=msg_p->data;  //
-    ECan_sendMBox(MSG_STATUS_MBOX);
+    ECan_sendMBox(MSG_NOTIFY_MBOX);
 }
 
 
